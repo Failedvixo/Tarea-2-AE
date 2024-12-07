@@ -144,29 +144,70 @@ async def delete_location(location_id: int, company=Depends(validate_company_api
         raise HTTPException(status_code=404, detail="Location not found or does not belong to your company")
     return {"message": "Location deleted successfully"}
 
-# Inserción de Sensor Data
-@app.post("/api/v1/sensor_data")
-async def insert_sensor_data(data: SensorDataInsert, sensor=Depends(validate_sensor_api_key)):
-    try:
-        for record in data.json_data:
-            con.execute(
-                "INSERT INTO SensorData (sensor_id, data) VALUES (?, ?)",
-                (sensor["sensor_id"], record)
-            )
-        return {"message": "Sensor data inserted successfully"}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
-
-# Consulta de Sensor Data
-@app.get("/api/v1/sensor_data")
-async def get_sensor_data(from_time: int, to_time: int, sensor_ids: List[int], company=Depends(validate_company_api_key)):
-    data = con.execute(
-        "SELECT * FROM SensorData WHERE sensor_id IN (SELECT sensor_id FROM Sensor WHERE location_id IN (SELECT location_id FROM Location WHERE company_id = ?)) AND sensor_id IN ? AND timestamp BETWEEN ? AND ?",
-        (company["company_id"], tuple(sensor_ids), from_time, to_time)
+# CRUD para Sensor
+@app.get("/api/v1/sensors")
+async def get_sensors(company=Depends(validate_company_api_key)):
+    sensors = con.execute(
+        """
+        SELECT * FROM Sensor
+        WHERE location_id IN (
+            SELECT location_id 
+            FROM Location 
+            WHERE company_id = ?
+        )
+        """,
+        (company["company_id"],)
     ).fetchall()
-    return [row_to_dict(con, row) for row in data]
+    return [row_to_dict(con, row) for row in sensors]
 
-# Ejecución de la aplicación
-if __name__ == '__main__':
-    import uvicorn
-    uvicorn.run(app, host='0.0.0.0', port=8000)
+@app.get("/api/v1/sensors/{sensor_id}")
+async def get_sensor(sensor_id: int, company=Depends(validate_company_api_key)):
+    sensor = con.execute(
+        """
+        SELECT * FROM Sensor
+        WHERE sensor_id = ? AND location_id IN (
+            SELECT location_id 
+            FROM Location 
+            WHERE company_id = ?
+        )
+        """,
+        (sensor_id, company["company_id"])
+    ).fetchone()
+    if not sensor:
+        raise HTTPException(status_code=404, detail="Sensor not found or does not belong to your company")
+    return row_to_dict(con, sensor)
+
+@app.put("/api/v1/sensors/{sensor_id}")
+async def update_sensor(sensor_id: int, sensor: Sensor, company=Depends(validate_company_api_key)):
+    affected_rows = con.execute(
+        """
+        UPDATE Sensor
+        SET sensor_name = ?, sensor_category = ?, sensor_meta = ?
+        WHERE sensor_id = ? AND location_id IN (
+            SELECT location_id 
+            FROM Location 
+            WHERE company_id = ?
+        )
+        """,
+        (sensor.sensor_name, sensor.sensor_category, sensor.sensor_meta, sensor_id, company["company_id"])
+    ).rowcount
+    if affected_rows == 0:
+        raise HTTPException(status_code=404, detail="Sensor not found or does not belong to your company")
+    return {"message": "Sensor updated successfully"}
+
+@app.delete("/api/v1/sensors/{sensor_id}")
+async def delete_sensor(sensor_id: int, company=Depends(validate_company_api_key)):
+    affected_rows = con.execute(
+        """
+        DELETE FROM Sensor
+        WHERE sensor_id = ? AND location_id IN (
+            SELECT location_id 
+            FROM Location 
+            WHERE company_id = ?
+        )
+        """,
+        (sensor_id, company["company_id"])
+    ).rowcount
+    if affected_rows == 0:
+        raise HTTPException(status_code=404, detail="Sensor not found or does not belong to your company")
+    return {"message": "Sensor deleted successfully"}
