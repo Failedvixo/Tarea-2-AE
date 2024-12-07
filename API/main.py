@@ -1,10 +1,8 @@
-from fastapi import FastAPI, HTTPException, Depends, status, Query
+from fastapi import FastAPI, Header, HTTPException, Depends
 from pydantic import BaseModel
 import duckdb
 import uuid
 from typing import List
-from datetime import datetime
-import json
 
 app = FastAPI()
 
@@ -29,18 +27,39 @@ class Sensor(BaseModel):
     sensor_meta: str
 
 class SensorDataInsert(BaseModel):
-    api_key: str
     json_data: List[dict]
 
+# Función para convertir resultado de consulta a diccionario
+def row_to_dict(cursor, row):
+    keys = [column[0] for column in cursor.description]
+    return dict(zip(keys, row))
+
+# Validación de credenciales de admin
+async def validate_credentials(username: str = Header(...), password: str = Header(...)):
+    admin = con.execute(
+        "SELECT * FROM Admin WHERE username = ? AND password = ?",
+        (username, password)
+    ).fetchone()
+    if not admin:
+        raise HTTPException(status_code=401, detail="Invalid credentials")
+    return True
+
+# Validación de API Key de compañía
+async def validate_company_api_key(company_api_key: str = Header(...)):
+    result = con.execute("SELECT * FROM Company WHERE company_api_key = ?", (company_api_key,)).fetchone()
+    if not result:
+        raise HTTPException(status_code=401, detail="Invalid company API key")
+    return row_to_dict(con, result)
+
 # Validación de API Key de sensor
-async def validate_sensor_api_key(sensor_api_key: str):
+async def validate_sensor_api_key(sensor_api_key: str = Header(...)):
     result = con.execute("SELECT * FROM Sensor WHERE sensor_api_key = ?", (sensor_api_key,)).fetchone()
     if not result:
-        raise HTTPException(status_code=400, detail="Invalid sensor API key")
-    return result
+        raise HTTPException(status_code=401, detail="Invalid sensor API key")
+    return row_to_dict(con, result)
 
 # Endpoints de Admin
-@app.post("/api/v1/admin/companies")
+@app.post("/api/v1/admin/companies", dependencies=[Depends(validate_credentials)])
 async def create_company(data: Company):
     try:
         company_api_key = str(uuid.uuid4())
@@ -56,7 +75,7 @@ async def create_company(data: Company):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
-@app.post("/api/v1/admin/locations")
+@app.post("/api/v1/admin/locations", dependencies=[Depends(validate_credentials)])
 async def create_location(location: Location):
     try:
         con.execute(
@@ -70,7 +89,7 @@ async def create_location(location: Location):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
-@app.post("/api/v1/admin/sensors")
+@app.post("/api/v1/admin/sensors", dependencies=[Depends(validate_credentials)])
 async def create_sensor(sensor: Sensor):
     try:
         sensor_api_key = str(uuid.uuid4())
@@ -192,81 +211,3 @@ async def delete_sensor(sensor_id: int, company=Depends(validate_company_api_key
     if affected_rows == 0:
         raise HTTPException(status_code=404, detail="Sensor not found or does not belong to your company")
     return {"message": "Sensor deleted successfully"}
-
-# Inserción de Sensor Data
-@app.post("/api/v1/sensor_data", status_code=status.HTTP_201_CREATED)
-async def insert_sensor_data(data: SensorDataInsert):
-    sensor = con.execute(
-        "SELECT sensor_id FROM Sensor WHERE sensor_api_key = ?", 
-        (data.api_key,)
-    ).fetchone()
-    if not sensor:
-        raise HTTPException(status_code=400, detail="Invalid sensor API key")
-    sensor_id = sensor[0]
-
-    try:
-        for record in data.json_data:
-            json_record = json.dumps(record)
-            timestamp = datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')
-            con.execute(
-                "INSERT INTO SensorData (data_id, sensor_id, timestamp, json_data) VALUES (NEXTVAL('data_id_seq'), ?, ?, ?)",
-                (sensor_id, timestamp, json_record)
-            )
-        return {"message": "Sensor data inserted successfully"}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
-
-# Consulta de Sensor Data
-@app.get("/api/v1/sensor_data", status_code=status.HTTP_200_OK)
-async def get_sensor_data(
-    company_api_key: str,
-    from_time: int,
-    to_time: int,
-    sensor_ids: str = Query(...)
-):
-    try:
-        # Intentar cargar `sensor_ids` como JSON
-        sensor_ids_list = json.loads(sensor_ids)
-
-        # Validar que sea una lista de enteros
-        if not isinstance(sensor_ids_list, list) or not all(isinstance(i, int) for i in sensor_ids_list):
-            raise ValueError("sensor_ids must be a list of integers")
-    except (json.JSONDecodeError, ValueError):
-        raise HTTPException(status_code=422, detail="Invalid format for sensor_ids. Must be a JSON-like list of integers.")
-    
-    # Validar el API Key de la compañía
-    company = con.execute(
-        "SELECT company_id FROM Company WHERE company_api_key = ?", 
-        (company_api_key,)
-    ).fetchone()
-    if not company:
-        raise HTTPException(status_code=401, detail="Invalid company API key")
-    company_id = company[0]
-
-    try:
-        data = con.execute(
-            """
-            SELECT sd.sensor_id, sd.json_data AS data, sd.timestamp
-            FROM SensorData sd
-            JOIN Sensor s ON sd.sensor_id = s.sensor_id
-            JOIN Location l ON s.location_id = l.location_id
-            WHERE l.company_id = ? 
-              AND sd.sensor_id IN ? 
-              AND sd.timestamp BETWEEN TO_TIMESTAMP(?) AND TO_TIMESTAMP(?)
-            """,
-            (company_id, tuple(sensor_ids_list), from_time, to_time)
-        ).fetchall()
-
-        results = [
-            {"sensor_id": row[0], "data": json.loads(row[1]), "timestamp": row[2].isoformat()} 
-            for row in data
-        ]
-
-        return {"sensor_data": results}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
-
-# Ejecución de la aplicación
-if __name__ == '__main__':
-    import uvicorn
-    uvicorn.run(app, host='0.0.0.0', port=8000)
