@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Header, HTTPException, Depends
+from fastapi import FastAPI, Header, HTTPException, Depends, status
 from pydantic import BaseModel
 import duckdb
 import uuid
