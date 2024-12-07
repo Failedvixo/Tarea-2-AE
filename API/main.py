@@ -3,6 +3,9 @@ from pydantic import BaseModel
 import duckdb
 import uuid
 from typing import List
+import json
+from datetime import datetime
+
 
 app = FastAPI()
 
@@ -27,7 +30,9 @@ class Sensor(BaseModel):
     sensor_meta: str
 
 class SensorDataInsert(BaseModel):
+    api_key: str
     json_data: List[dict]
+
 
 # Función para convertir resultado de consulta a diccionario
 def row_to_dict(cursor, row):
