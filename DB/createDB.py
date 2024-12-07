@@ -6,18 +6,18 @@ db_path = 'iot_platform.duckdb'
 # Conexión a DuckDB
 conn = duckdb.connect(db_path)
 
-# Crear la secuencia para Company
+# Crear las secuencias
 conn.execute("""
 CREATE SEQUENCE IF NOT EXISTS company_id_seq START 1 INCREMENT 1;
 """)
-
-# Crear la secuencia para Location
 conn.execute("""
 CREATE SEQUENCE IF NOT EXISTS location_id_seq START 1 INCREMENT 1;
 """)
-
 conn.execute("""
 CREATE SEQUENCE IF NOT EXISTS sensor_id_seq START 1 INCREMENT 1;
+""")
+conn.execute("""
+CREATE SEQUENCE IF NOT EXISTS data_id_seq START 1 INCREMENT 1;
 """)
 
 # Crear las tablas
@@ -67,7 +67,7 @@ CREATE TABLE IF NOT EXISTS Sensor (
 conn.execute("""
 -- Tabla SensorData
 CREATE TABLE IF NOT EXISTS SensorData (
-    data_id INTEGER PRIMARY KEY,
+    data_id INTEGER PRIMARY KEY DEFAULT NEXTVAL('data_id_seq'),
     sensor_id INTEGER NOT NULL,
     timestamp TIMESTAMP NOT NULL,
     json_data JSON NOT NULL,
@@ -85,9 +85,6 @@ if admin_exists == 0:
     print("Usuario administrador creado: username=admin, password=admin")
 else:
     print("Usuario administrador ya existe.")
-
-# Ejemplo de inserción de datos en las tablas
-
 
 print("Base de datos creada correctamente en:", db_path)
 
