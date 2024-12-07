@@ -16,6 +16,10 @@ conn.execute("""
 CREATE SEQUENCE IF NOT EXISTS location_id_seq START 1 INCREMENT 1;
 """)
 
+conn.execute("""
+CREATE SEQUENCE IF NOT EXISTS sensor_id_seq START 1 INCREMENT 1;
+""")
+
 # Crear las tablas
 conn.execute("""
 -- Tabla Admin
@@ -50,7 +54,7 @@ CREATE TABLE IF NOT EXISTS Location (
 conn.execute("""
 -- Tabla Sensor
 CREATE TABLE IF NOT EXISTS Sensor (
-    sensor_id INTEGER PRIMARY KEY,
+    sensor_id INTEGER PRIMARY KEY DEFAULT NEXTVAL('sensor_id_seq'),
     location_id INTEGER NOT NULL,
     sensor_name VARCHAR(255) NOT NULL,
     sensor_category VARCHAR(255),

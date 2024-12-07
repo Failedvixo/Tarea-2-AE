@@ -29,28 +29,37 @@ class Sensor(BaseModel):
 class SensorDataInsert(BaseModel):
     json_data: List[dict]
 
+# Función para convertir resultado de consulta a diccionario
+def row_to_dict(cursor, row):
+    keys = [column[0] for column in cursor.description]
+    return dict(zip(keys, row))
+
 # Validación de credenciales de admin
 async def validate_credentials(username: str = Header(...), password: str = Header(...)):
-    if username != "admin" or password != "secret":
+    admin = con.execute(
+        "SELECT * FROM Admin WHERE username = ? AND password = ?",
+        (username, password)
+    ).fetchone()
+    if not admin:
         raise HTTPException(status_code=401, detail="Invalid credentials")
     return True
 
 # Validación de API Key de compañía
 async def validate_company_api_key(company_api_key: str = Header(...)):
-    company = con.execute("SELECT * FROM Company WHERE company_api_key = ?", (company_api_key,)).fetchone()
-    if not company:
+    result = con.execute("SELECT * FROM Company WHERE company_api_key = ?", (company_api_key,)).fetchone()
+    if not result:
         raise HTTPException(status_code=401, detail="Invalid company API key")
-    return company
+    return row_to_dict(con, result)
 
 # Validación de API Key de sensor
 async def validate_sensor_api_key(sensor_api_key: str = Header(...)):
-    sensor = con.execute("SELECT * FROM Sensor WHERE sensor_api_key = ?", (sensor_api_key,)).fetchone()
-    if not sensor:
+    result = con.execute("SELECT * FROM Sensor WHERE sensor_api_key = ?", (sensor_api_key,)).fetchone()
+    if not result:
         raise HTTPException(status_code=401, detail="Invalid sensor API key")
-    return sensor
+    return row_to_dict(con, result)
 
 # Endpoints de Admin
-@app.post("/api/v1/admin/companies", dependencies=[Depends(validate_credentials)]) #funcional
+@app.post("/api/v1/admin/companies", dependencies=[Depends(validate_credentials)])
 async def create_company(data: Company):
     try:
         company_api_key = str(uuid.uuid4())
@@ -66,7 +75,7 @@ async def create_company(data: Company):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
-@app.post("/api/v1/admin/locations", dependencies=[Depends(validate_credentials)]) #funcional
+@app.post("/api/v1/admin/locations", dependencies=[Depends(validate_credentials)])
 async def create_location(location: Location):
     try:
         con.execute(
@@ -85,7 +94,7 @@ async def create_sensor(sensor: Sensor):
     try:
         sensor_api_key = str(uuid.uuid4())
         con.execute(
-            "INSERT INTO Sensor (location_id, sensor_name, sensor_category, sensor_meta, sensor_api_key) VALUES (?, ?, ?, ?, ?)",
+            "INSERT INTO Sensor (sensor_id, location_id, sensor_name, sensor_category, sensor_meta, sensor_api_key) VALUES (NEXTVAL('sensor_id_seq'), ?, ?, ?, ?, ?)",
             (sensor.location_id, sensor.sensor_name, sensor.sensor_category, sensor.sensor_meta, sensor_api_key)
         )
         return {
@@ -97,36 +106,47 @@ async def create_sensor(sensor: Sensor):
         raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
 
 # CRUD para Location
-@app.get("/api/v1/locations", dependencies=[Depends(validate_company_api_key)])
-async def get_locations():
-    return con.execute("SELECT * FROM Location").fetchall()
+@app.get("/api/v1/locations")
+async def get_locations(company=Depends(validate_company_api_key)):
+    locations = con.execute(
+        "SELECT * FROM Location WHERE company_id = ?", 
+        (company["company_id"],)
+    ).fetchall()
+    return [row_to_dict(con, row) for row in locations]
 
-@app.get("/api/v1/locations/{location_id}", dependencies=[Depends(validate_company_api_key)])
-async def get_location(location_id: int):
-    location = con.execute("SELECT * FROM Location WHERE location_id = ?", (location_id,)).fetchone()
+@app.get("/api/v1/locations/{location_id}")
+async def get_location(location_id: int, company=Depends(validate_company_api_key)):
+    location = con.execute(
+        "SELECT * FROM Location WHERE location_id = ? AND company_id = ?", 
+        (location_id, company["company_id"])
+    ).fetchone()
     if not location:
         raise HTTPException(status_code=404, detail="Location not found")
-    return location
+    return row_to_dict(con, location)
 
-@app.put("/api/v1/locations/{location_id}", dependencies=[Depends(validate_company_api_key)])
-async def update_location(location_id: int, location: Location):
-    con.execute(
-        "UPDATE Location SET location_name = ?, location_country = ?, location_city = ?, location_meta = ? WHERE location_id = ?",
-        (location.location_name, location.location_country, location.location_city, location.location_meta, location_id)
-    )
+@app.put("/api/v1/locations/{location_id}")
+async def update_location(location_id: int, location: Location, company=Depends(validate_company_api_key)):
+    affected_rows = con.execute(
+        "UPDATE Location SET location_name = ?, location_country = ?, location_city = ?, location_meta = ? WHERE location_id = ? AND company_id = ?",
+        (location.location_name, location.location_country, location.location_city, location.location_meta, location_id, company["company_id"])
+    ).rowcount
+    if affected_rows == 0:
+        raise HTTPException(status_code=404, detail="Location not found or does not belong to your company")
     return {"message": "Location updated successfully"}
 
-@app.delete("/api/v1/locations/{location_id}", dependencies=[Depends(validate_company_api_key)])
-async def delete_location(location_id: int):
-    con.execute("DELETE FROM Location WHERE location_id = ?", (location_id,))
+@app.delete("/api/v1/locations/{location_id}")
+async def delete_location(location_id: int, company=Depends(validate_company_api_key)):
+    affected_rows = con.execute(
+        "DELETE FROM Location WHERE location_id = ? AND company_id = ?", 
+        (location_id, company["company_id"])
+    ).rowcount
+    if affected_rows == 0:
+        raise HTTPException(status_code=404, detail="Location not found or does not belong to your company")
     return {"message": "Location deleted successfully"}
-
-# CRUD para Sensor y Sensor Data sería similar
 
 # Inserción de Sensor Data
 @app.post("/api/v1/sensor_data")
-async def insert_sensor_data(data: SensorDataInsert, sensor_api_key: str = Header(...)):
-    sensor = await validate_sensor_api_key(sensor_api_key)
+async def insert_sensor_data(data: SensorDataInsert, sensor=Depends(validate_sensor_api_key)):
     try:
         for record in data.json_data:
             con.execute(
@@ -139,16 +159,12 @@ async def insert_sensor_data(data: SensorDataInsert, sensor_api_key: str = Heade
 
 # Consulta de Sensor Data
 @app.get("/api/v1/sensor_data")
-async def get_sensor_data(from_time: int, to_time: int, sensor_ids: List[int], company_api_key: str = Header(...)):
-    await validate_company_api_key(company_api_key)
-    try:
-        data = con.execute(
-            "SELECT * FROM SensorData WHERE sensor_id IN ? AND timestamp BETWEEN ? AND ?",
-            (tuple(sensor_ids), from_time, to_time)
-        ).fetchall()
-        return data
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+async def get_sensor_data(from_time: int, to_time: int, sensor_ids: List[int], company=Depends(validate_company_api_key)):
+    data = con.execute(
+        "SELECT * FROM SensorData WHERE sensor_id IN (SELECT sensor_id FROM Sensor WHERE location_id IN (SELECT location_id FROM Location WHERE company_id = ?)) AND sensor_id IN ? AND timestamp BETWEEN ? AND ?",
+        (company["company_id"], tuple(sensor_ids), from_time, to_time)
+    ).fetchall()
+    return [row_to_dict(con, row) for row in data]
 
 # Ejecución de la aplicación
 if __name__ == '__main__':
