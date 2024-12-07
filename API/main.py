@@ -212,6 +212,30 @@ async def delete_sensor(sensor_id: int, company=Depends(validate_company_api_key
         raise HTTPException(status_code=404, detail="Sensor not found or does not belong to your company")
     return {"message": "Sensor deleted successfully"}
 
+# Inserción de Sensor Data
+@app.post("/api/v1/sensor_data", status_code=status.HTTP_201_CREATED)
+async def insert_sensor_data(data: SensorDataInsert):
+    sensor = con.execute(
+        "SELECT sensor_id FROM Sensor WHERE sensor_api_key = ?", 
+        (data.api_key,)
+    ).fetchone()
+    if not sensor:
+        raise HTTPException(status_code=400, detail="Invalid sensor API key")
+    sensor_id = sensor[0]
+
+    try:
+        for record in data.json_data:
+            # Convertir el diccionario en un JSON válido
+            json_record = json.dumps(record)
+            timestamp = datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')  # Formato compatible con TIMESTAMP
+            con.execute(
+                "INSERT INTO SensorData (data_id, sensor_id, timestamp, json_data) VALUES (NEXTVAL('data_id_seq'), ?, ?, ?)",
+                (sensor_id, timestamp, json_record)
+            )
+        return {"message": "Sensor data inserted successfully"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+
 # Consulta de Sensor Data
 @app.get("/api/v1/sensor_data")
 async def get_sensor_data(
