@@ -212,6 +212,39 @@ async def delete_sensor(sensor_id: int, company=Depends(validate_company_api_key
         raise HTTPException(status_code=404, detail="Sensor not found or does not belong to your company")
     return {"message": "Sensor deleted successfully"}
 
+# Consulta de Sensor Data
+@app.get("/api/v1/sensor_data")
+async def get_sensor_data(
+    from_time: int, 
+    to_time: int, 
+    sensor_ids: List[int], 
+    company_api_key: str
+):
+    company = con.execute(
+        "SELECT company_id FROM Company WHERE company_api_key = ?", 
+        (company_api_key,)
+    ).fetchone()
+    if not company:
+        raise HTTPException(status_code=401, detail="Invalid company API key")
+    company_id = company[0]
+
+    try:
+        data = con.execute(
+            """
+            SELECT sd.sensor_id, sd.json_data AS data, sd.timestamp
+            FROM SensorData sd
+            JOIN Sensor s ON sd.sensor_id = s.sensor_id
+            JOIN Location l ON s.location_id = l.location_id
+            WHERE l.company_id = ? 
+              AND sd.sensor_id IN ?
+              AND sd.timestamp BETWEEN ? AND ?
+            """,
+            (company_id, tuple(sensor_ids), from_time, to_time)
+        ).fetchall()
+        return [row_to_dict(con, row) for row in data]
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Internal server error: {str(e)}")
+
 if __name__ == '__main__':
     import uvicorn
     uvicorn.run(app, host='0.0.0.0', port=8000)
