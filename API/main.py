@@ -211,3 +211,7 @@ async def delete_sensor(sensor_id: int, company=Depends(validate_company_api_key
     if affected_rows == 0:
         raise HTTPException(status_code=404, detail="Sensor not found or does not belong to your company")
     return {"message": "Sensor deleted successfully"}
+
+if __name__ == '__main__':
+    import uvicorn
+    uvicorn.run(app, host='0.0.0.0', port=8000)
